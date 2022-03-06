@@ -9,20 +9,57 @@ from datetime import datetime
 
 # App Insights
 # TODO: Import required libraries for App Insights
+from opencensus.ext.azure.log_exporter import AzureLogHandler
+from opencensus.ext.azure.log_exporter import AzureEventHandler
+from opencensus.ext.azure import metrics_exporter
+from opencensus.stats import aggregation as aggregation_module
+from opencensus.stats import measure as measure_module
+from opencensus.stats import stats as stats_module
+from opencensus.stats import view as view_module
+from opencensus.tags import tag_map as tag_map_module
+from opencensus.trace import config_integration
+from opencensus.ext.azure.trace_exporter import AzureExporter
+from opencensus.trace.samplers import ProbabilitySampler
+from opencensus.trace.tracer import Tracer
+from opencensus.ext.flask.flask_middleware import FlaskMiddleware
+# For metrics
+stats = stats_module.stats
+view_manager = stats.view_manager
 
 # Logging
-logger = # TODO: Setup logger
+config_integration.trace_integrations(['logging'])
+config_integration.trace_integrations(['requests'])
+# Standard Logging
+logger = logging.getLogger(__name__)
+handler = AzureLogHandler(connection_string='InstrumentationKey=[your-guid]')
+handler.setFormatter(logging.Formatter('%(traceId)s %(spanId)s %(message)s'))
+logger.addHandler(handler)
+# Logging custom Events 
+logger.addHandler(AzureEventHandler(connection_string='InstrumentationKey=[your-guid]'))
+# Set the logging level
+logger.setLevel(logging.INFO)
 
 # Metrics
-exporter = # TODO: Setup exporter
+exporter = metrics_exporter.new_metrics_exporter(
+enable_standard_metrics=True,
+connection_string='InstrumentationKey=[your-guid]')
+view_manager.register_exporter(exporter)
 
 # Tracing
-tracer = # TODO: Setup tracer
+tracer = Tracer(
+ exporter=AzureExporter(
+     connection_string='InstrumentationKey=[your-guid]'),
+ sampler=ProbabilitySampler(1.0),
+)
 
 app = Flask(__name__)
 
 # Requests
-middleware = # TODO: Setup flask middleware
+middleware = FlaskMiddleware(
+ app,
+ exporter=AzureExporter(connection_string="InstrumentationKey=[your-guid]"),
+ sampler=ProbabilitySampler(rate=1.0)
+)
 
 # Load configurations from environment or config file
 app.config.from_pyfile('config_file.cfg')
@@ -43,7 +80,18 @@ else:
     title = app.config['TITLE']
 
 # Redis Connection
-r = redis.Redis()
+redis_server = os.environ['REDIS']
+# Redis Connection to another container
+try:
+ if "REDIS_PWD" in os.environ:
+     r = redis.StrictRedis(host=redis_server,
+                     port=6379,
+                     password=os.environ['REDIS_PWD'])
+ else:
+     r = redis.Redis(redis_server)
+ r.ping()
+except redis.ConnectionError:
+ exit('Failed to connect to Redis, terminating.')
 
 # Change title to host name to demo NLB
 if app.config['SHOWHOST'] == "true":
